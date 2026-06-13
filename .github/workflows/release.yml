@@ -39,11 +39,16 @@ jobs:
       - name: Build and test
         run: mvn -B --no-transfer-progress clean package
 
+      # Create the release if the tag was pushed via git; if the release was
+      # made in the GitHub UI (which also creates the tag and triggers this
+      # run), just attach the jar. --clobber keeps re-runs idempotent.
       - name: Publish GitHub Release with jar
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >
-          gh release create "$GITHUB_REF_NAME"
-          "target/debezium-server-rushdb-${{ steps.ver.outputs.version }}.jar"
-          --title "$GITHUB_REF_NAME"
-          --generate-notes
+        run: |
+          JAR="target/debezium-server-rushdb-${{ steps.ver.outputs.version }}.jar"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$JAR" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$JAR" --title "$GITHUB_REF_NAME" --generate-notes
+          fi

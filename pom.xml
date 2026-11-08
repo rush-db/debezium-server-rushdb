@@ -11,15 +11,15 @@
 
   <name>Debezium Server sink for RushDB</name>
   <description>
-    Streams Debezium change events into RushDB via the records import API.
-    Drop the jar into Debezium Server's lib directory and set
-    debezium.sink.type=rushdb.
+    Streams Debezium change events into RushDB Cloud or a self-hosted RushDB
+    engine. Selected with debezium.sink.type=rushdb in a Debezium Server built
+    with this sink (see distribution/).
   </description>
 
   <properties>
-    <maven.compiler.release>17</maven.compiler.release>
+    <maven.compiler.release>21</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <version.debezium>3.0.0.Final</version.debezium>
+    <version.debezium>3.7.1.Final</version.debezium>
     <version.jackson>2.17.2</version.jackson>
   </properties>
 
@@ -29,6 +29,19 @@
     <dependency>
       <groupId>io.debezium</groupId>
       <artifactId>debezium-api</artifactId>
+      <version>${version.debezium}</version>
+      <scope>provided</scope>
+    </dependency>
+    <!-- Debezium Server's sink SPI (DebeziumServerConsumer, CapturingEvents). -->
+    <dependency>
+      <groupId>io.debezium</groupId>
+      <artifactId>debezium-server-api</artifactId>
+      <version>${version.debezium}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.debezium.quarkus</groupId>
+      <artifactId>debezium-quarkus-engine-spi</artifactId>
       <version>${version.debezium}</version>
       <scope>provided</scope>
     </dependency>

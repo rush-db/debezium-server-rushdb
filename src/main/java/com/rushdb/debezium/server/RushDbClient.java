@@ -1,7 +1,7 @@
 package com.rushdb.debezium.server;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.io.IOException;
@@ -11,67 +11,73 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * Minimal RushDB REST client: merge-upsert via the JSON import endpoint and
- * delete-by-query on syncKey. Retries 408/429/5xx and transport errors with
- * jittered exponential backoff.
+ * Applies sink operations to RushDB: merge-upserts by the identity property
+ * and deletes by it. {@link #forConnection} picks the RushDB Cloud REST client
+ * or the engine protocol client; both have the same semantics.
+ *
+ * <p>Requests are retried with jittered exponential backoff on transport
+ * errors, HTTP 408/429/5xx, and errors RushDB marks retryable.
  */
-public class RushDbClient {
+public abstract class RushDbClient {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    static final ObjectMapper JSON = new ObjectMapper();
 
     private final HttpClient http;
-    private final String baseUrl;
-    private final String apiKey;
-    private final String mergeStrategy;
-    private final boolean suggestTypes;
+    protected final String mergeStrategy;
+    protected final boolean suggestTypes;
     private final int maxAttempts;
 
-    public RushDbClient(String baseUrl, String apiKey, String mergeStrategy, boolean suggestTypes, int maxAttempts) {
+    protected RushDbClient(String mergeStrategy, boolean suggestTypes, int maxAttempts) {
         this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
-        this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
-        this.apiKey = apiKey;
         this.mergeStrategy = mergeStrategy;
         this.suggestTypes = suggestTypes;
         this.maxAttempts = maxAttempts;
     }
 
+    public static RushDbClient forConnection(
+            Connection connection, String mergeStrategy, boolean suggestTypes, int maxAttempts) {
+        if (connection instanceof Connection.Cloud cloud) {
+            return new CloudClient(cloud, mergeStrategy, suggestTypes, maxAttempts);
+        }
+        return new EngineClient((Connection.Engine) connection, mergeStrategy, suggestTypes, maxAttempts);
+    }
+
     /** Bulk upsert: records matching an existing identity are merged, the rest created. */
-    public void importRecords(String label, List<ObjectNode> records, String syncKeyField)
-            throws InterruptedException {
-        ObjectNode body = JSON.createObjectNode();
-        body.put("label", label);
-        ArrayNode data = body.putArray("data");
-        records.forEach(data::add);
-        ObjectNode options = body.putObject("options");
-        options.put("suggestTypes", suggestTypes);
-        options.putArray("mergeBy").add(syncKeyField);
-        options.put("mergeStrategy", mergeStrategy);
-        post("/api/v1/records/import/json", body);
-    }
+    public abstract void upsert(String label, List<ObjectNode> records, String syncKeyField)
+            throws InterruptedException;
 
-    /** Deletes all records of the label whose identity value is in the set. */
-    public void deleteBySyncKeys(String label, List<String> syncKeys, String syncKeyField)
-            throws InterruptedException {
-        ObjectNode body = JSON.createObjectNode();
-        body.putArray("labels").add(label);
-        ArrayNode in = body.putObject("where").putObject(syncKeyField).putArray("$in");
-        syncKeys.forEach(in::add);
-        post("/api/v1/records/delete", body);
-    }
+    /** Deletes all records of the label whose identity value is in the list. */
+    public abstract void deleteBySyncKeys(String label, List<String> syncKeys, String syncKeyField)
+            throws InterruptedException;
 
-    private void post(String path, ObjectNode body) throws InterruptedException {
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + path))
+    /**
+     * Makes identity lookups on the label cheap. A no-op where the destination
+     * offers no way to declare an index.
+     */
+    public abstract void ensureSyncKeyIndex(String label, String syncKeyField) throws InterruptedException;
+
+    /** One response that is not a success: whether to try again, and why. */
+    protected record Failure(boolean retryable, String message) {}
+
+    /** Inspects a response; {@code null} means success. */
+    protected abstract Failure failureOf(int status, String body);
+
+    /** Sends a JSON POST, retrying retryable failures; returns the response body. */
+    protected String post(String url, Map<String, String> headers, ObjectNode body, String what)
+            throws InterruptedException {
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
+                .uri(URI.create(url))
                 .timeout(Duration.ofSeconds(60))
-                .header("Authorization", "Bearer " + apiKey)
                 .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
-                .build();
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString()));
+        headers.forEach(builder::header);
+        HttpRequest request = builder.build();
 
-        IOException lastIo = null;
+        Exception last = null;
         for (int attempt = 0; attempt < maxAttempts; attempt++) {
             if (attempt > 0) {
                 long cap = Math.min(10_000, 250L * (1L << attempt));
@@ -79,20 +85,30 @@ public class RushDbClient {
             }
             try {
                 HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
-                int status = response.statusCode();
-                if (status >= 200 && status < 300) {
-                    return;
+                Failure failure = failureOf(response.statusCode(), response.body());
+                if (failure == null) {
+                    return response.body();
                 }
-                if (status == 408 || status == 429 || status >= 500) {
-                    lastIo = new IOException("RushDB " + path + " returned " + status);
-                    continue;
+                if (!failure.retryable()) {
+                    throw new IllegalStateException("RushDB " + what + " failed: " + failure.message());
                 }
-                throw new IllegalStateException(
-                        "RushDB " + path + " returned " + status + ": " + response.body());
+                last = new IOException("RushDB " + what + ": " + failure.message());
             } catch (IOException e) {
-                lastIo = e;
+                last = e;
             }
         }
-        throw new IllegalStateException("RushDB " + path + " failed after " + maxAttempts + " attempts", lastIo);
+        throw new IllegalStateException("RushDB " + what + " failed after " + maxAttempts + " attempts", last);
+    }
+
+    static boolean retryableStatus(int status) {
+        return status == 408 || status == 429 || status >= 500;
+    }
+
+    static JsonNode parseOrNull(String body) {
+        try {
+            return body == null || body.isBlank() ? null : JSON.readTree(body);
+        } catch (IOException e) {
+            return null;
+        }
     }
 }

@@ -1,16 +1,23 @@
 name: Release
 
 # Triggered by pushing a version tag, e.g.:
-#   git tag v0.2.0 && git push origin v0.2.0
-# Builds the jar (versioned from the tag), runs the tests, and publishes a
-# GitHub Release with the jar attached.
+#   git tag v1.1.0 && git push origin v1.1.0
+# Builds and tests the sink (versioned from the tag), builds the Debezium
+# Server distribution with the sink built in, pushes its Docker image to
+# GHCR, and publishes a GitHub Release with the sink jar and the
+# distribution archive.
 on:
   push:
     tags:
       - "v*"
 
 permissions:
-  contents: write # create the release and upload the jar asset
+  contents: write # create the release and upload assets
+  packages: write # push the image to ghcr.io
+
+env:
+  RUSHDB_IMAGE: rushdb/rushdb:3.0.5
+  IMAGE: ghcr.io/rush-db/debezium-server-rushdb
 
 jobs:
   release:
@@ -18,37 +25,63 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
           cache: maven
 
-      # The tag drives the artifact version: v0.2.0 -> 0.2.0
+      # The tag drives the artifact version: v1.1.0 -> 1.1.0
       - name: Derive version from tag
         id: ver
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
-      - name: Set project version
-        run: >
-          mvn -B --no-transfer-progress versions:set
-          -DnewVersion=${{ steps.ver.outputs.version }}
-          -DgenerateBackupPoms=false
+      - name: Set project versions
+        run: |
+          for pom in pom.xml distribution/pom.xml; do
+            mvn -B --no-transfer-progress -f "$pom" versions:set \
+              -DnewVersion=${{ steps.ver.outputs.version }} -DgenerateBackupPoms=false
+          done
 
-      - name: Build and test
-        run: mvn -B --no-transfer-progress clean package
+      - name: Start a RushDB engine for the live tests
+        run: |
+          docker run -d --name rushdb -e RUSHDB_TOKEN=ci-token -p 127.0.0.1:3937:3000 "$RUSHDB_IMAGE"
+          timeout 60 bash -c "until curl -s -o /dev/null http://127.0.0.1:3937/protocol/v1/execute; do sleep 1; done"
+
+      - name: Build and test the sink
+        env:
+          RUSHDB_TEST_ENGINE_URL: http://127.0.0.1:3937
+          RUSHDB_TEST_ENGINE_TOKEN: ci-token
+        run: mvn -B --no-transfer-progress clean install
+
+      - name: Build the distribution
+        run: |
+          mvn -B --no-transfer-progress -f distribution/pom.xml package
+          dist="debezium-server-rushdb-dist-${{ steps.ver.outputs.version }}"
+          mkdir -p "target/$dist"
+          cp -r distribution/target/lib distribution/target/*-runner.jar "target/$dist/"
+          tar -C target -czf "target/$dist.tar.gz" "$dist"
+
+      - name: Push the Docker image
+        run: |
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker build -f distribution/Dockerfile \
+            -t "$IMAGE:${{ steps.ver.outputs.version }}" -t "$IMAGE:latest" .
+          docker push "$IMAGE:${{ steps.ver.outputs.version }}"
+          docker push "$IMAGE:latest"
 
       # Create the release if the tag was pushed via git; if the release was
       # made in the GitHub UI (which also creates the tag and triggers this
-      # run), just attach the jar. --clobber keeps re-runs idempotent.
-      - name: Publish GitHub Release with jar
+      # run), just attach the assets. --clobber keeps re-runs idempotent.
+      - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          JAR="target/debezium-server-rushdb-${{ steps.ver.outputs.version }}.jar"
+          v="${{ steps.ver.outputs.version }}"
+          assets=("target/debezium-server-rushdb-$v.jar" "target/debezium-server-rushdb-dist-$v.tar.gz")
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "$JAR" --clobber
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" "$JAR" --title "$GITHUB_REF_NAME" --generate-notes
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" --title "$GITHUB_REF_NAME" --generate-notes
           fi

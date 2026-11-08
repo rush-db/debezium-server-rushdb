@@ -6,19 +6,46 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+env:
+  RUSHDB_IMAGE: rushdb/rushdb:3.0.5
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
           cache: maven
 
-      # verify = compile + run the unit tests; fails the build on any failure.
-      - name: Build and test
-        run: mvn -B --no-transfer-progress verify
+      # A single-tenant and a multitenant engine for the live round-trip tests.
+      - name: Start RushDB engines
+        run: |
+          docker run -d --name rushdb -e RUSHDB_TOKEN=ci-token -p 127.0.0.1:3937:3000 "$RUSHDB_IMAGE"
+          docker run -d --name rushdb-mt -e RUSHDB_TOKEN=ci-token -p 127.0.0.1:3938:3000 "$RUSHDB_IMAGE" \
+            --multitenant --pgwire-port 0
+          for port in 3937 3938; do
+            timeout 60 bash -c "until curl -s -o /dev/null http://127.0.0.1:$port/protocol/v1/execute; do sleep 1; done"
+          done
+
+      # verify = compile + unit tests + live engine tests; any failure fails the build.
+      - name: Build and test the sink
+        env:
+          RUSHDB_TEST_ENGINE_URL: http://127.0.0.1:3937
+          RUSHDB_TEST_ENGINE_TOKEN: ci-token
+          RUSHDB_TEST_MT_ENGINE_URL: http://127.0.0.1:3938
+          RUSHDB_TEST_MT_ENGINE_TOKEN: ci-token
+        run: mvn -B --no-transfer-progress install
+
+      - name: Build the distribution
+        run: mvn -B --no-transfer-progress -f distribution/pom.xml package
+
+      - name: Build the Docker image
+        run: docker build -f distribution/Dockerfile -t debezium-server-rushdb:ci .

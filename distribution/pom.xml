@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Debezium Server with the RushDB sink built in.
+
+  Debezium Server is a Quarkus application: its CDI beans, sinks included, are
+  discovered when the application is built, so a sink jar copied into an
+  existing server's lib/ is never loaded ("No Debezium consumer named 'rushdb'
+  is available"). This module builds the server the way upstream builds
+  debezium-server-dist, with the RushDB sink and the source connectors of the
+  official distribution, and the Dockerfile next to it puts the result into
+  the official image.
+
+    mvn install                          # the sink, in the repository root
+    mvn -f distribution/pom.xml package  # target/*-runner.jar + target/lib/
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.rushdb</groupId>
+  <artifactId>debezium-server-rushdb-dist</artifactId>
+  <version>0.1.0</version>
+  <packaging>jar</packaging>
+  <name>Debezium Server with the RushDB sink</name>
+
+  <properties>
+    <maven.compiler.release>17</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <!-- Keep in step with the sink's version.debezium and the Dockerfile's base image. -->
+    <version.debezium>3.7.1.Final</version.debezium>
+    <!-- The Quarkus version Debezium Server ${version.debezium} is built with. -->
+    <quarkus.version.runtime>3.33.2</quarkus.version.runtime>
+    <quarkus.package.type>legacy-jar</quarkus.package.type>
+    <quarkus.package.jar.type>legacy-jar</quarkus.package.jar.type>
+    <version.rushdb.sink>${project.version}</version.rushdb.sink>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>io.debezium</groupId>
+        <artifactId>debezium-server-bom</artifactId>
+        <version>${version.debezium}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>io.debezium</groupId>
+        <artifactId>debezium-bom</artifactId>
+        <version>${version.debezium}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>io.quarkus</groupId>
+        <artifactId>quarkus-bom</artifactId>
+        <version>${quarkus.version.runtime}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <dependency>
+      <groupId>io.debezium</groupId>
+      <artifactId>debezium-server-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.debezium</groupId>
+      <artifactId>debezium-connect-plugins</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.rushdb</groupId>
+      <artifactId>debezium-server-rushdb</artifactId>
+      <version>${version.rushdb.sink}</version>
+    </dependency>
+
+    <!-- The source connectors of the official distribution. -->
+    <dependency>
+      <groupId>io.debezium.quarkus</groupId>
+      <artifactId>debezium-quarkus-postgres</artifactId>
+      <version>${version.debezium}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.debezium.quarkus</groupId>
+      <artifactId>debezium-quarkus-mysql</artifactId>
+      <version>${version.debezium}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.debezium.quarkus</groupId>
+      <artifactId>debezium-quarkus-mariadb</artifactId>
+      <version>${version.debezium}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.debezium.quarkus</groupId>
+      <artifactId>debezium-quarkus-mongodb</artifactId>
+      <version>${version.debezium}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.debezium.quarkus</groupId>
+      <artifactId>debezium-quarkus-sqlserver</artifactId>
+      <version>${version.debezium}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.debezium.quarkus</groupId>
+      <artifactId>debezium-quarkus-oracle</artifactId>
+      <version>${version.debezium}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.debezium.quarkus</groupId>
+      <artifactId>debezium-quarkus-db2</artifactId>
+      <version>${version.debezium}</version>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>io.quarkus</groupId>
+        <artifactId>quarkus-maven-plugin</artifactId>
+        <version>${quarkus.version.runtime}</version>
+        <configuration>
+          <systemProperties>
+            <quarkus.kubernetes-config.secrets.enabled>true</quarkus.kubernetes-config.secrets.enabled>
+            <!-- Needed for the MongoDB connector's SRV connection strings. -->
+            <quarkus.naming.enable-jndi>true</quarkus.naming.enable-jndi>
+          </systemProperties>
+        </configuration>
+        <executions>
+          <execution>
+            <goals>
+              <goal>build</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

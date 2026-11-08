@@ -18,7 +18,7 @@ import java.util.TreeMap;
  * Maps Debezium change events (raw envelope or ExtractNewRecordState-flattened)
  * to RushDB sink operations.
  *
- * <p>Design choices mirror rushdb-synx: source field names are preserved
+ * <p>Design choices: source field names are preserved
  * verbatim (nested paths flatten with a separator, default {@code .}); labels
  * are UPPER_CASE singular; every record carries a deterministic
  * {@code syncKey} used for idempotent merge-upserts and deletes; RushDB

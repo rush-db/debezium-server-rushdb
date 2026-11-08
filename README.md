@@ -6,12 +6,6 @@ sink that streams change events from **any Debezium source connector**
 [RushDB](https://rushdb.com) — no Kafka required. It writes to **RushDB Cloud**
 or to a **self-hosted RushDB engine** with the same results.
 
-This is the Debezium-ecosystem sibling of
-[`rushdb-synx`](https://github.com/rush-db/rushdb-synx): same destination
-semantics (merge-upserts by `syncKey`, source-verbatim property names, PII
-suppression, reserved-key sanitization), but the capture side is delegated
-entirely to Debezium.
-
 ## How it works
 
 The sink is a CDI bean registered as `@Named("rushdb")` and selected with

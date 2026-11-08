@@ -145,7 +145,8 @@ Java 21 (Debezium Server 3.7's runtime) and Maven.
 mvn verify   # unit tests: event mapping, request shapes for both targets,
              # retries, target selection
 
-# with live engines, the sink's round trip against real RushDB engines:
+# the sink's round trip against real RushDB engines (and RushDB Cloud with
+# RUSHDB_TEST_API_KEY set):
 docker run -d -e RUSHDB_TOKEN=test-token -p 127.0.0.1:3937:3000 rushdb/rushdb:3.0.5
 docker run -d -e RUSHDB_TOKEN=test-token -p 127.0.0.1:3938:3000 rushdb/rushdb:3.0.5 --multitenant --pgwire-port 0
 RUSHDB_TEST_ENGINE_URL=http://127.0.0.1:3937 RUSHDB_TEST_ENGINE_TOKEN=test-token \
@@ -157,7 +158,8 @@ RUSHDB_TEST_MT_ENGINE_URL=http://127.0.0.1:3938 RUSHDB_TEST_MT_ENGINE_TOKEN=test
 GitHub Actions ([`.github/workflows`](.github/workflows)):
 
 - **CI** (`ci.yml`) — `mvn verify` against a single-tenant and a multitenant
-  RushDB engine, then builds the distribution and its Docker image.
+  RushDB engine and RushDB Cloud (the `RUSHDB_TEST_API_KEY` secret), then
+  builds the distribution and its Docker image.
 - **Release** (`release.yml`) — on a version tag: builds and tests the sink
   (versioned from the tag), builds the distribution, pushes
   `ghcr.io/rush-db/debezium-server-rushdb:<version>` (and `latest`), and

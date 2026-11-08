@@ -42,6 +42,8 @@ jobs:
           RUSHDB_TEST_ENGINE_TOKEN: ci-token
           RUSHDB_TEST_MT_ENGINE_URL: http://127.0.0.1:3938
           RUSHDB_TEST_MT_ENGINE_TOKEN: ci-token
+          # RushDB Cloud round trip; skipped when the secret is not available (e.g. fork PRs).
+          RUSHDB_TEST_API_KEY: ${{ secrets.RUSHDB_TEST_API_KEY }}
         run: mvn -B --no-transfer-progress install
 
       - name: Build the distribution

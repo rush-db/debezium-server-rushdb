@@ -53,6 +53,7 @@ jobs:
         env:
           RUSHDB_TEST_ENGINE_URL: http://127.0.0.1:3937
           RUSHDB_TEST_ENGINE_TOKEN: ci-token
+          RUSHDB_TEST_API_KEY: ${{ secrets.RUSHDB_TEST_API_KEY }}
         run: mvn -B --no-transfer-progress clean install
 
       - name: Build the distribution
